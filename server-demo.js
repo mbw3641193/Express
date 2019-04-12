@@ -3,7 +3,6 @@ let express = require('express'),
     app = express(),
     bodyParser = require('body-parser'),
     session = require('express-session');
-let {readFile,writeFile} = require('./utils/fs-promise');   
 
 
 let port = 8686;
