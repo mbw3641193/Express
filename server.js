@@ -3,56 +3,125 @@ let express = require('express'),
     app = express(),
     bodyParser = require('body-parser'),
     session = require('express-session');
-let {readFile,writeFile} = require('./utils/fs-promise');   
+let { readFile, writeFile } = require('./utils/fs-promise');
 
 
 let port = 8686;
 
-app.listen(port,()=>{       //从创建服务到监听端口，两件事同时完成，并且以后有请求过来执行的是app这个方法(通过源码可以看出app本身是个方法，但其本身也可作为对象使用)；
+app.listen(port, () => {
     console.log('server is success,listen on---' + port);
-});  
-
-//静态资源文件处理
-app.use(express.static('./public'));
-//静态资源处理完成
-
-
-//body-parser
-//如果是POST请求，会把基于请求主体传递的信息预先截获,并把转换后的结果挂载到req.body属性上
-app.use(bodyParser.json());                         //如果传递的是JSON格式的字符串，基于bodyParser.json()会把它转换为JSON格式的对象
-app.use(bodyParser.urlencoded({extended:false}));   //如果传递的是urlencoded格式的字符串，基于bodyParser.urlencoded()会把它转换为键值对方式的对象
-
-//express-session
-//供我们后续操作session的中间件，基于这个中间件，我们可以设置客户端cookie的过期时间(也理解为session在服务器端存储的时间)
-app.use(session({
-    secret: 'keyboard cat',                             //秘钥
-    resave: false,                                      //resave是指每次请求都重新设置session cookie，假设你的cookie是10分钟过期，每次请求都会再设置10分钟
-    saveUninitialized: false,                           // 是否保存未初始化的会话
-    cookie: { maxAge : 1000 * 60 * 60 *24 * 30 }        // 设置 session 的有效时间，单位毫秒
-}))
-
-
-//API处理
-app.get('/getUser',(req,res)=>{
-    /**
-     * 当客户端向服务器端发送请求，如果请求方式是GET，请求路径是'/getUser'，就会把回调函数触发执行
-     * 回调函数有3个参数：req、res、next
-     * get请求，接受问号传参的信息，可以使用: req.query / req.param()
-     */
-    req.session.xxx = 'xxx'             //设置session
-    console.log(req.session.xxx)        //获取session
-
-    res.send({
-        code:1,
-        message:'ok'
-    });
 });
 
-app.post('/register',(req,res)=>{
-    /**
-     * 回调函数有3个参数：req、res、next
-     * get请求，接受问号传参的信息，可以使用: req.query / req.param()
-     * 接收请求出体传递的信息，此时我们需要使用一个中间件(body-parser)
-     */
-    console.log(req.body)   //获取的是请求主体内容(已通过body-parser中间件解析)
+/********************* 中间件 **********************/
+//body-parser   req.body获取
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: false }));
+
+//express-session   req.session获取
+app.use(session({
+    secret: 'mbw',
+    resave: false,
+    saveUninitialized: false,
+    cookie: { maxAge: 1000 * 60 * 60 * 24 * 30 }
+}))
+
+//自定义中间件：读取json数据
+app.use(async (req, res, next) => {
+    let userData = await readFile('./public/companylist.json'); //await返回的是readFile处理完成的结果，即是一个string字符串
+    req.userData = JSON.parse(userData);
+
+    next();
 })
+
+/********************* API处理 **********************/
+//登录
+app.post('/login', (req, res) => {
+    let success_login = { code: 1, size: '登录成功' };  //成功返回的字段
+    let fail_login = { code: 0, size: '登录失败' };  //失败返回的字段
+
+    let { name = '', password = '' } = req.body;
+
+    password.substr(4, 24).split('').reverse().join(''); //对password进行二次加密，删除前4位与后4位，再翻转顺序
+
+    let result = req.userData.find(item => {     //验证密码是否存在 ,找不到返回undefined
+        return (item.name == name || item.phone == name) && item.password == password;
+    });
+    console.log('result----------' + result);
+
+    if (result) { //登陆成功, 并且 种下并记录session(是否登录、登录用户的id)
+        req.session.isLogin = true;
+        req.session.userID = result.index;
+
+        res.send(success_login);
+        console.log(success_login);
+        return;
+
+    } else {
+        res.send(fail_login);
+        console.log(fail_login);
+    }
+
+});
+
+
+//检测是否登录
+app.get('/checkLogin', (req, res) => {
+    let success_isLogin = { code: 1, size: '已登录' };  //成功返回的字段
+    let fail_isLogin = { code: 0, size: '未登录' };  //失败返回的字段
+
+    let isLogin = req.session.isLogin;
+    if (isLogin) {
+        res.send(success_isLogin);
+        return;
+    }
+    res.send(fail_isLogin);
+});
+
+
+//退出登录
+app.get('/exitLogin', (req, res) => {
+    let exitLogin = { code: 0, size: '成功删除' };
+
+    req.session.isLogin = false;
+    req.session.userID = null;
+
+    res.send(exitLogin);
+});
+
+
+//获取用户信息：没有传递用户id就获取当前登录用户的信息
+app.get('/getUser', (req, res) => {
+    let fail_getUser = { code: 0, size: '获取失败',data:null  };  //失败返回的字段
+
+    let {userID=req.session.userID} = req.query;  //query : get请求下问号传参的参数。如果是空，那么默认传session里面存储的userID
+    
+    let result = req.userData.find(item => {
+        return item.index === userID;
+    });
+
+    if(result){
+        res.send({          //成功返回的字段
+            code: 1, 
+            size: '获取成功', 
+            data:{...result,password:null}  //返回用户信息，但是不显示登录密码
+        });
+        return;
+    }
+    res.send(fail_getUser);
+})
+
+
+
+
+/********************* 静态资源文件处理 **********************/
+app.use(express.static('./public'));
+app.use((req, res, next) => {
+    res.status(404);
+    res.redirect('/404.html');
+})
+
+
+
+
+
+
